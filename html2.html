@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Iframe Loader</title>
+<style>
+  body{
+    font-family:system-ui,Arial;
+    margin:18px;
+    background: linear-gradient(135deg, #0b0b0c 0%, #1a1a2e 50%, #16213e 100%);
+    color:#e6e6e6;
+    overflow-x: hidden;
+    position: relative;
+    min-height: 100vh;
+  }
+  
+  .controls{
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+    margin-bottom:12px;
+    backdrop-filter: blur(10px);
+    background: rgba(0,0,0,0.3);
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  
+  input,button{
+    padding:8px;
+    border-radius:8px;
+    border:1px solid #444;
+    background:rgba(17,17,17,0.8);
+    color:#e6e6e6;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(5px);
+  }
+  
+  input:focus, button:hover {
+    border-color: #666;
+    background: rgba(34,34,34,0.9);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  
+  #grid{
+    display:flex;
+    flex-wrap:wrap;
+    gap:12px;
+  }
+  
+  .frame-wrap{
+    border:1px solid rgba(255,255,255,0.2);
+    background:rgba(0,0,0,0.8);
+    overflow:hidden;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(5px);
+  }
+  
+  .frame-wrap:hover {
+    border-color: rgba(255,255,255,0.4);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.4);
+  }
+  
+  small{opacity:.7}
+  
+  /* Smooth animations for buttons */
+  button {
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  button:active {
+    transform: translateY(1px);
+  }
+</style>
+</head>
+<body>
+<div class="controls">
+  <label><small>URL</small><br>
+    <input id="url" value="https://hen.nightly.pw" style="min-width:260px"></label>
+
+  <label><small>Count</small><br>
+    <input id="count" type="number" min="1" value="4" style="width:84px"></label>
+
+  <label><small>Width (px)</small><br>
+    <input id="w" type="number" min="50" value="450" style="width:90px"></label>
+
+  <label><small>Height (px)</small><br>
+    <input id="h" type="number" min="50" value="450" style="width:90px"></label>
+
+  <label><small>Stagger (ms)</small><br>
+    <input id="stagger" type="number" min="0" value="200" style="width:90px"></label>
+
+  <div style="display:flex;flex-direction:column;gap:6px">
+    <button id="start">Start</button>
+    <button id="destroy">Destroy</button>
+  </div>
+  
+  <div style="position:absolute;top:18px;right:18px">
+    <button id="keyboardMode" style="padding:8px 16px;background:rgba(0,100,200,0.8);border:1px solid #0080ff;color:white;border-radius:8px;font-weight:500;">
+      🎹 Keyboard Mode: OFF
+    </button>
+  </div>
+</div>
+
+<div style="margin-bottom:8px">
+  <small>Notes: use Destroy before starting again to remove existing iframes.</small>
+</div>
+
+<div id="grid"></div>
+
+<script>
+(() => {
+  const urlInput = document.getElementById('url');
+  const countInput = document.getElementById('count');
+  const wInput = document.getElementById('w');
+  const hInput = document.getElementById('h');
+  const staggerInput = document.getElementById('stagger');
+  const grid = document.getElementById('grid');
+  const startBtn = document.getElementById('start');
+  const destroyBtn = document.getElementById('destroy');
+  const keyboardModeBtn = document.getElementById('keyboardMode');
+
+  let timers = [];
+  let keyboardMode = false;
+  let iframes = [];
+
+  function createIframe(src, width, height, index){
+    const wrap = document.createElement('div');
+    wrap.className = 'frame-wrap';
+    wrap.style.width = width + 'px';
+    wrap.style.height = height + 'px';
+    wrap.style.position = 'relative';
+    
+    const iframe = document.createElement('iframe');
+    iframe.src = src;
+    iframe.width = width;
+    iframe.height = height;
+    iframe.style.border = '0';
+    iframe.allow = 'fullscreen; autoplay; clipboard-write; encrypted-media';
+    
+    // Create control buttons container
+    const controls = document.createElement('div');
+    controls.style.position = 'absolute';
+    controls.style.bottom = '8px';
+    controls.style.left = '8px';
+    controls.style.right = '8px';
+    controls.style.display = 'flex';
+    controls.style.gap = '8px';
+    controls.style.justifyContent = 'center';
+    controls.style.zIndex = '1000';
+    
+    // Progress button
+    const progressBtn = document.createElement('button');
+    progressBtn.textContent = 'Loading...';
+    progressBtn.style.cssText = 'padding: 4px 8px; background: rgba(0,0,0,0.7); color: white; border: 1px solid #444; border-radius: 4px; font-size: 12px;';
+    progressBtn.disabled = true;
+    
+    // Fullscreen button
+    const fullscreenBtn = document.createElement('button');
+    fullscreenBtn.textContent = 'Fullscreen';
+    fullscreenBtn.style.cssText = 'padding: 4px 8px; background: rgba(0,0,0,0.7); color: white; border: 1px solid #444; border-radius: 4px; font-size: 12px;';
+    
+    // Exit fullscreen button (initially hidden)
+    const exitFullscreenBtn = document.createElement('button');
+    exitFullscreenBtn.textContent = 'Exit Fullscreen';
+    exitFullscreenBtn.style.cssText = 'position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 10000; padding: 8px 16px; background: rgba(0,0,0,0.8); color: white; border: 1px solid #444; border-radius: 4px; font-size: 14px; display: none;';
+    
+    controls.appendChild(progressBtn);
+    controls.appendChild(fullscreenBtn);
+    wrap.appendChild(iframe);
+    wrap.appendChild(controls);
+    document.body.appendChild(exitFullscreenBtn);
+    grid.appendChild(wrap);
+    
+    // Auto-click close button after iframe loads
+    iframe.addEventListener('load', () => {
+      progressBtn.textContent = 'Loaded';
+      progressBtn.style.background = 'rgba(0,255,0,0.3)';
+      
+      // Use requestAnimationFrame for smoother performance
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          try {
+            const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+            const closeButton = iframeDoc.querySelector('button[style*="display: inline-flex"]');
+            if (closeButton && closeButton.textContent.trim().toLowerCase().includes('close')) {
+              closeButton.click();
+              progressBtn.textContent = 'Closed';
+              progressBtn.style.background = 'rgba(255,0,0,0.3)';
+            }
+          } catch (e) {
+            console.log('Could not access iframe content (cross-origin)');
+            progressBtn.textContent = 'Cross-origin';
+            progressBtn.style.background = 'rgba(255,255,0,0.3)';
+          }
+        }, 500); // Reduced delay for better responsiveness
+      });
+    });
+    
+    // Fullscreen functionality
+    fullscreenBtn.addEventListener('click', () => {
+      // Hide the controls when going fullscreen
+      controls.style.display = 'none';
+      
+      if (iframe.requestFullscreen) {
+        iframe.requestFullscreen();
+        exitFullscreenBtn.style.display = 'block';
+      } else if (iframe.webkitRequestFullscreen) {
+        iframe.webkitRequestFullscreen();
+        exitFullscreenBtn.style.display = 'block';
+      } else if (iframe.msRequestFullscreen) {
+        iframe.msRequestFullscreen();
+        exitFullscreenBtn.style.display = 'block';
+      } else {
+        // Fallback: fullscreen the wrapper if iframe doesn't support it
+        if (wrap.requestFullscreen) {
+          wrap.requestFullscreen();
+          exitFullscreenBtn.style.display = 'block';
+        } else if (wrap.webkitRequestFullscreen) {
+          wrap.webkitRequestFullscreen();
+          exitFullscreenBtn.style.display = 'block';
+        } else if (wrap.msRequestFullscreen) {
+          wrap.msRequestFullscreen();
+          exitFullscreenBtn.style.display = 'block';
+        }
+      }
+    });
+    
+    // Exit fullscreen functionality
+    exitFullscreenBtn.addEventListener('click', () => {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      } else if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+      } else if (document.msExitFullscreen) {
+        document.msExitFullscreen();
+      }
+      exitFullscreenBtn.style.display = 'none';
+      // Show controls again when exiting fullscreen
+      controls.style.display = 'flex';
+    });
+    
+    // Listen for fullscreen change events
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement) {
+        exitFullscreenBtn.style.display = 'none';
+        // Show controls again when exiting fullscreen
+        controls.style.display = 'flex';
+      }
+    });
+    
+    // Add iframe to tracking array for keyboard mode
+    iframes.push(iframe);
+    
+    return {wrap, iframe, progressBtn, fullscreenBtn, exitFullscreenBtn};
+  }
+
+  function start(){
+    destroy(); // ensure clean start
+    const url = urlInput.value.trim() || 'https://hen.nightly.pw';
+    const count = Math.max(1, Math.floor(Number(countInput.value) || 1));
+    const w = Math.max(50, Math.floor(Number(wInput.value) || 450));
+    const h = Math.max(50, Math.floor(Number(hInput.value) || 450));
+    const stagger = Math.max(0, Math.floor(Number(staggerInput.value) || 0));
+
+    for(let i=0;i<count;i++){
+      const t = setTimeout(()=> createIframe(url, w, h, i), i * stagger);
+      timers.push(t);
+    }
+  }
+
+  function destroy(){
+    timers.forEach(t => clearTimeout(t));
+    timers = [];
+    iframes = []; // Clear iframes array
+    while(grid.firstChild) grid.removeChild(grid.firstChild);
+    
+    // Clean up any exit fullscreen buttons
+    const exitButtons = document.querySelectorAll('button[style*="position: fixed"]');
+    exitButtons.forEach(btn => btn.remove());
+  }
+
+  startBtn.addEventListener('click', start);
+  destroyBtn.addEventListener('click', destroy);
+  
+  // Keyboard mode toggle
+  keyboardModeBtn.addEventListener('click', () => {
+    keyboardMode = !keyboardMode;
+    keyboardModeBtn.textContent = keyboardMode ? '🎹 Keyboard Mode: ON' : '🎹 Keyboard Mode: OFF';
+    keyboardModeBtn.style.background = keyboardMode ? 'rgba(0,200,100,0.8)' : 'rgba(0,100,200,0.8)';
+    keyboardModeBtn.style.borderColor = keyboardMode ? '#00ff80' : '#0080ff';
+  });
+
+  // Global keyboard event listener for keyboard mode
+  document.addEventListener('keydown', e => {
+    // Quick shortcuts (only when keyboard mode is off)
+    if(!keyboardMode) {
+      if(e.key === 'Enter' && (e.ctrlKey || e.metaKey)) start();
+      if(e.key === 'Escape') destroy();
+    }
+    
+    // Send keystrokes to all iframes when keyboard mode is active
+    if(keyboardMode && iframes.length > 0) {
+      console.log(`Keyboard mode: sending keydown '${e.key}' to ${iframes.length} iframes`);
+      
+      iframes.forEach((iframe, index) => {
+        try {
+          // Method 1: Try direct access (works for same-origin)
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+          const iframeWindow = iframe.contentWindow;
+          
+          if(iframeDoc && iframeWindow) {
+            // Create and dispatch keyboard event to iframe
+            const keyEvent = new KeyboardEvent('keydown', {
+              key: e.key,
+              code: e.code,
+              keyCode: e.keyCode,
+              which: e.which,
+              shiftKey: e.shiftKey,
+              ctrlKey: e.ctrlKey,
+              altKey: e.altKey,
+              metaKey: e.metaKey,
+              bubbles: true,
+              cancelable: true
+            });
+            
+            iframeDoc.dispatchEvent(keyEvent);
+            console.log(`Sent keydown to iframe ${index + 1}`);
+          }
+        } catch (error) {
+          // Method 2: Try postMessage for cross-origin
+          try {
+            iframe.contentWindow.postMessage({
+              type: 'keyboard',
+              event: 'keydown',
+              key: e.key,
+              code: e.code,
+              keyCode: e.keyCode,
+              which: e.which,
+              shiftKey: e.shiftKey,
+              ctrlKey: e.ctrlKey,
+              altKey: e.altKey,
+              metaKey: e.metaKey
+            }, '*');
+            console.log(`Sent postMessage to iframe ${index + 1}`);
+          } catch (postError) {
+            console.log(`Cannot send keyboard event to iframe ${index + 1}:`, error.message);
+          }
+        }
+      });
+    }
+  });
+  
+  // Also handle keyup events
+  document.addEventListener('keyup', e => {
+    if(keyboardMode && iframes.length > 0) {
+      iframes.forEach((iframe, index) => {
+        try {
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+          
+          if(iframeDoc) {
+            const keyEvent = new KeyboardEvent('keyup', {
+              key: e.key,
+              code: e.code,
+              keyCode: e.keyCode,
+              which: e.which,
+              shiftKey: e.shiftKey,
+              ctrlKey: e.ctrlKey,
+              altKey: e.altKey,
+              metaKey: e.metaKey,
+              bubbles: true,
+              cancelable: true
+            });
+            
+            iframeDoc.dispatchEvent(keyEvent);
+          }
+        } catch (error) {
+          // Try postMessage for cross-origin
+          try {
+            iframe.contentWindow.postMessage({
+              type: 'keyboard',
+              event: 'keyup',
+              key: e.key,
+              code: e.code,
+              keyCode: e.keyCode,
+              which: e.which,
+              shiftKey: e.shiftKey,
+              ctrlKey: e.ctrlKey,
+              altKey: e.altKey,
+              metaKey: e.metaKey
+            }, '*');
+          } catch (postError) {
+            console.log(`Cannot send keyup event to iframe ${index + 1}`);
+          }
+        }
+      });
+    }
+  });
+})();
+</script>
+</body>
+</html>
